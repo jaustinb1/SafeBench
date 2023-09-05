@@ -1,7 +1,7 @@
-''' 
+'''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-04-03 22:35:17
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     This work is licensed under the terms of the MIT license.
@@ -88,15 +88,15 @@ class CarlaRunner:
 
         # define logger
         logger_kwargs = setup_logger_kwargs(
-            self.exp_name, 
-            self.output_dir, 
+            self.exp_name,
+            self.output_dir,
             self.seed,
             agent=agent_config['policy_type'],
             scenario=scenario_config['policy_type'],
             scenario_category=self.scenario_category
         )
         self.logger = Logger(**logger_kwargs)
-        
+
         # prepare parameters
         if self.mode == 'train_agent':
             self.buffer_capacity = agent_config['buffer_capacity']
@@ -155,7 +155,7 @@ class CarlaRunner:
         flag = pygame.HWSURFACE | pygame.DOUBLEBUF
         if not self.render:
             flag = flag | pygame.HIDDEN
-        if self.scenario_category == 'planning': 
+        if self.scenario_category == 'planning':
             # [bird-eye view, Lidar, front view] or [bird-eye view, front view]
             if self.env_params['disable_lidar']:
                 window_size = (self.env_params['display_size'] * 2, self.env_params['display_size'] * self.num_scenario)
@@ -186,7 +186,7 @@ class CarlaRunner:
             # reset the index counter to create endless loader
             data_loader.reset_idx_counter()
 
-            # get static obs and then reset with init action 
+            # get static obs and then reset with init action
             static_obs = self.env.get_static_obs(sampled_scenario_configs)
             scenario_init_action, additional_dict = self.scenario_policy.get_init_action(static_obs)
             obs, infos = self.env.reset(sampled_scenario_configs, scenario_init_action)
@@ -197,22 +197,32 @@ class CarlaRunner:
 
             # start loop
             episode_reward = []
+            rewards_, risks_ = [], []
             while not self.env.all_scenario_done():
                 # get action from agent policy and scenario policy (assume using one batch)
-                ego_actions = self.agent_policy.get_action(obs, infos, deterministic=False)
+                ego_task_actions, ego_actions = self.agent_policy.get_action(obs, infos, deterministic=False)
                 scenario_actions = self.scenario_policy.get_action(obs, infos, deterministic=False)
 
                 # apply action to env and get obs
-                next_obs, rewards, dones, infos = self.env.step(ego_actions=ego_actions, scenario_actions=scenario_actions)
-                replay_buffer.store([ego_actions, scenario_actions, obs, next_obs, rewards, dones], additional_dict=infos)
+                next_obs, rewards, risks, dones, infos = self.env.step(ego_actions=ego_actions, scenario_actions=scenario_actions)
+                replay_buffer.store([ego_task_actions, ego_actions, scenario_actions, obs, next_obs, rewards, risks, dones], additional_dict=infos)
                 obs = copy.deepcopy(next_obs)
                 episode_reward.append(np.mean(rewards))
 
+                rewards_.append(rewards)
+                risks_.append(risks)
+
+            for _ in range(20):
                 # train off-policy agent or scenario
                 if self.mode == 'train_agent' and self.agent_policy.type == 'offpolicy':
                     self.agent_policy.train(replay_buffer)
                 elif self.mode == 'train_scenario' and self.scenario_policy.type == 'offpolicy':
                     self.scenario_policy.train(replay_buffer)
+
+            rewards_ = np.concatenate(rewards_, -1)
+            risks_ = np.concatenate(risks_, -1)
+            print('return: ', np.sum(rewards_, 0), 'risks ', np.sum(risks_, 0))
+
 
             # end up environment
             self.env.clean_up()
@@ -263,7 +273,7 @@ class CarlaRunner:
                 scenario_actions = self.scenario_policy.get_action(obs, infos, deterministic=True)
 
                 # apply action to env and get obs
-                obs, rewards, _, infos = self.env.step(ego_actions=ego_actions, scenario_actions=scenario_actions)
+                obs, rewards, risks, _, infos = self.env.step(ego_actions=ego_actions, scenario_actions=scenario_actions)
 
                 # save video
                 if self.save_video:
@@ -313,11 +323,11 @@ class CarlaRunner:
 
             # create scenarios within the vectorized wrapper
             self.env = VectorWrapper(
-                self.env_params, 
-                self.scenario_config, 
-                self.world, 
-                self.birdeye_render, 
-                self.display, 
+                self.env_params,
+                self.scenario_config,
+                self.world,
+                self.birdeye_render,
+                self.display,
                 self.logger
             )
 
@@ -358,6 +368,6 @@ class CarlaRunner:
         return start_episode
 
     def close(self):
-        pygame.quit() 
+        pygame.quit()
         if self.env:
             self.env.clean_up()

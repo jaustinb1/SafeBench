@@ -1,7 +1,7 @@
 '''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-04-03 21:37:36
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     This work is licensed under the terms of the MIT license.
@@ -16,7 +16,7 @@ class RouteReplayBuffer:
     """
         This buffer supports parallel storing transitions from multiple trajectories.
     """
-    
+
     def __init__(self, num_scenario, mode, buffer_capacity=1000):
         self.mode = mode
         self.buffer_capacity = buffer_capacity
@@ -30,18 +30,22 @@ class RouteReplayBuffer:
         self.reset_init_buffer()
 
     def reset_buffer(self):
-        self.buffer_ego_actions = [[] for _ in range(self.num_scenario)]
+        self.buffer_ego_task_actions = [[] for _ in range(self.num_scenario)]
+        self.buffer_ego_mixed_actions = [[] for _ in range(self.num_scenario)]
         self.buffer_scenario_actions = [[] for _ in range(self.num_scenario)]
         self.buffer_obs = [[] for _ in range(self.num_scenario)]
         self.buffer_next_obs = [[] for _ in range(self.num_scenario)]
         self.buffer_rewards = [[] for _ in range(self.num_scenario)]
+        self.buffer_risks = [[] for _ in range(self.num_scenario)]
         self.buffer_dones = [[] for _ in range(self.num_scenario)]
         self.buffer_additional_dict = [{} for _ in range(self.num_scenario)]
 
     def reset_init_buffer(self):
         self.buffer_static_obs = []
-        self.buffer_init_action = []
+        self.buffer_init_task_action = []
+        self.buffer_init_mixed_action = []
         self.buffer_episode_reward = []
+        self.buffer_episode_risk = []
         self.buffer_init_additional_dict = {}
         self.init_buffer_len = 0
 
@@ -50,26 +54,31 @@ class RouteReplayBuffer:
         for s_i in range(self.num_scenario):
             dones = np.where(self.buffer_dones[s_i])[0]
             start_ = dones[-2] if len(dones) > 1 else -1
-            end_ = dones[-1]
+            end_ = dones[-1] if len(dones) > 0 else -1
             self.buffer_episode_reward.append(np.sum(self.buffer_rewards[s_i][start_+1:end_+1]))
+            self.buffer_episode_risk.append(np.sum(self.buffer_risks[s_i][start_+1:end_+1]))
 
     def store(self, data_list, additional_dict):
-        ego_actions = data_list[0]
-        scenario_actions = data_list[1]
-        obs = data_list[2]
-        next_obs = data_list[3]
-        rewards = data_list[4]
-        dones = data_list[5]
+        ego_task_actions = data_list[0]
+        ego_mixed_actions = data_list[1]
+        scenario_actions = data_list[2]
+        obs = data_list[3]
+        next_obs = data_list[4]
+        rewards = data_list[5]
+        risks = data_list[6]
+        dones = data_list[7]
         self.buffer_len += len(rewards)
 
         # separate trajectories according to infos
         for s_i in range(len(additional_dict)):
             sid = additional_dict[s_i]['scenario_id']
-            self.buffer_ego_actions[sid].append(ego_actions[s_i])
+            self.buffer_ego_task_actions[sid].append(ego_task_actions[s_i])
+            self.buffer_ego_mixed_actions[sid].append(ego_mixed_actions[s_i])
             self.buffer_scenario_actions[sid].append(scenario_actions[s_i])
             self.buffer_obs[sid].append(obs[s_i])
             self.buffer_next_obs[sid].append(next_obs[s_i])
             self.buffer_rewards[sid].append(rewards[s_i])
+            self.buffer_risks[sid].append(risks[s_i])
             self.buffer_dones[sid].append(dones[s_i])
 
             # store additional information in given dict (e.g., cost and actor_info)
@@ -84,7 +93,8 @@ class RouteReplayBuffer:
         static_obs = data_list[0]
         scenario_init_action = data_list[1]
         self.buffer_static_obs.append(static_obs)
-        self.buffer_init_action.append(scenario_init_action)
+        self.buffer_init_task_action.append(scenario_init_action)
+        self.buffer_init_mixed_action.append(scenario_init_action)
         self.init_buffer_len += len(scenario_init_action)
 
         # store additional information in given dict
@@ -96,22 +106,27 @@ class RouteReplayBuffer:
 
     def sample_init(self, batch_size):
         num_trajectory = len(self.buffer_init_action)
-        start_idx = np.max([0, num_trajectory - self.buffer_capacity]) 
+        start_idx = np.max([0, num_trajectory - self.buffer_capacity])
 
         # select up-to-date samples from buffer
         prepared_static_obs = self.buffer_static_obs[start_idx:]
-        prepared_init_action = self.buffer_init_action[start_idx:]
+        prepared_init_task_action = self.buffer_init_task_action[start_idx:]
+        prepared_init_mixed_action = sefl.buffer_init_mixed_action[start_idx:]
         prepared_episode_reward = self.buffer_episode_reward[start_idx:]
+        prepared_episode_risk = self.buffer_episode_risk[start_idx:]
 
         # sample action and episode reward
         sample_index = np.random.randint(0, len(prepared_init_action), size=batch_size)
         static_obs = np.concatenate(prepared_static_obs, axis=0)[sample_index]
-        init_action = np.concatenate(prepared_init_action, axis=0)[sample_index]
+        init_task_action = np.concatenate(prepared_init_task_action, axis=0)[sample_index]
+        init_mixed_action = np.concatenate(prepared_init_mixed_action, axis=0)[sample_index]
         episode_reward = np.array(prepared_episode_reward)[sample_index]
+        episode_risk = np.array(prepared_episode_risk)[sample_idx]
         batch = {
             'static_obs': static_obs,
             'init_action': init_action,
             'episode_reward': episode_reward,
+            'episode_risk': episode_risk,
         }
 
         # add additional information to the batch (assume with torch)
@@ -121,11 +136,13 @@ class RouteReplayBuffer:
 
     def sample(self, batch_size):
         # prepare concatenated list
-        prepared_ego_actions = []
+        prepared_ego_task_actions = []
+        prepared_ego_mixed_actions = []
         prepared_scenario_actions = []
         prepared_obs = []
         prepared_next_obs = []
         prepared_rewards = []
+        prepared_risks = []
         prepared_dones = []
         prepared_infos = {}
 
@@ -137,14 +154,16 @@ class RouteReplayBuffer:
             start_idx = np.max([0, num_trajectory - samples_per_trajectory])
 
             # concat
-            prepared_ego_actions += self.buffer_ego_actions[s_i][start_idx:]
+            prepared_ego_task_actions += self.buffer_ego_task_actions[s_i][start_idx:]
+            prepared_ego_mixed_actions += self.buffer_ego_mixed_actions[s_i][start_idx:]
             prepared_scenario_actions += self.buffer_scenario_actions[s_i][start_idx:]
             prepared_obs += self.buffer_obs[s_i][start_idx:]
             prepared_next_obs += self.buffer_next_obs[s_i][start_idx:]
             prepared_rewards += self.buffer_rewards[s_i][start_idx:]
+            prepared_risks += self.buffer_risks[s_i][start_idx:]
             prepared_dones += self.buffer_dones[s_i][start_idx:]
 
-            # add additional information 
+            # add additional information
             for k_i in self.buffer_additional_dict[s_i].keys():
                 if k_i not in prepared_infos.keys():
                     prepared_infos[k_i] = []
@@ -154,18 +173,21 @@ class RouteReplayBuffer:
         # the first sample does not have previous state ()
         sample_index = np.random.randint(1, len(prepared_rewards), size=batch_size)
 
-        # prepare batch 
-        action = prepared_ego_actions if self.mode == 'train_agent' else prepared_scenario_actions
+        # prepare batch
+        task_action = prepared_ego_task_actions if self.mode == 'train_agent' else prepared_scenario_actions
+        mixed_action = prepared_ego_mixed_actions if self.mode == 'train_agent' else prepared_scenario_actions
         batch = {
-            'action': np.stack(action)[sample_index],# action
+            'task_action': np.stack(task_action)[sample_index],
+            'mixed_action': np.stack(mixed_action)[sample_index],# action
             'state': np.stack(prepared_obs)[sample_index, :],         # state
             'n_state': np.stack(prepared_next_obs)[sample_index, :],  # next state
             'reward': np.stack(prepared_rewards)[sample_index],       # reward
+            'risk': np.stack(prepared_risks)[sample_index],           # risk
             'done': np.stack(prepared_dones)[sample_index],           # done
         }
 
         # add additional information to the batch
-        batch_info = {} 
+        batch_info = {}
         for k_i in prepared_infos.keys():
             if k_i == 'route_waypoints':
                 continue
@@ -181,7 +203,7 @@ class PerceptionReplayBuffer:
     """
         This buffer supports parallel storing image states and labels for object detection
     """
-    
+
     def __init__(self, num_scenario, mode, buffer_capacity=1000):
         self.mode = mode
         self.buffer_capacity = buffer_capacity
@@ -194,7 +216,7 @@ class PerceptionReplayBuffer:
         self.buffer_scenario_actions = [[] for _ in range(num_scenario)]    # synthetic textures (attack)
         self.buffer_obs = [[] for _ in range(num_scenario)]                 # image observations (FPV observation)
         self.buffer_loss = [[] for _ in range(num_scenario)]                # object detection loss (IoU, class, etc.)
-    
+
     def finish_one_episode(self):
         pass
 
@@ -204,10 +226,10 @@ class PerceptionReplayBuffer:
         self.buffer_episode_reward = []
         self.buffer_init_additional_dict = {}
         self.init_buffer_len = 0
-    
+
     def store_init(self, data_list, additional_dict=None):
         pass
-    
+
     def store(self, data_list, additional_dict=None):
         ego_actions = data_list[0]
         scenario_actions = data_list[1]
@@ -247,12 +269,12 @@ class PerceptionReplayBuffer:
         sample_index = np.random.randint(0, len(prepared_loss), size=batch_size)
 
         batch = {
-            'label': np.stack(prepared_bbox_label)[sample_index, :],        
+            'label': np.stack(prepared_bbox_label)[sample_index, :],
             # 'prediction': np.stack(prepared_predictions)[sample_index, :],     # TODO: Multiple/empty predictions should be stacked together
             # 'attack': np.stack(prepared_scenario_actions)[sample_index, :],
             # 'attack': torch.stack(prepared_scenario_actions)[sample_index, :],
             'image': np.stack(prepared_obs)[sample_index, :],
-            'loss': np.stack(prepared_loss)[sample_index],                       # scalar with 1D 
+            'loss': np.stack(prepared_loss)[sample_index],                       # scalar with 1D
         }
-        
+
         return batch

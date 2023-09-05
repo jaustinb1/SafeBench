@@ -1,7 +1,7 @@
-''' 
+'''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-04-03 19:41:22
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     Modified from <https://github.com/cjy1992/gym-carla/blob/master/gym_carla/envs/carla_env.py>
@@ -22,10 +22,10 @@ import carla
 
 from safebench.gym_carla.envs.route_planner import RoutePlanner
 from safebench.gym_carla.envs.misc import (
-    display_to_rgb, 
-    rgb_to_display_surface, 
-    get_lane_dis, 
-    get_pos, 
+    display_to_rgb,
+    rgb_to_display_surface,
+    get_lane_dis,
+    get_pos,
     get_preview_lane_dis
 )
 from safebench.scenario.scenario_definition.route_scenario import RouteScenario
@@ -36,8 +36,8 @@ from safebench.scenario.tools.route_manipulation import interpolate_trajectory
 
 
 class CarlaEnv(gym.Env):
-    """ 
-        An OpenAI-gym style interface for CARLA simulator. 
+    """
+        An OpenAI-gym style interface for CARLA simulator.
     """
     def __init__(self, env_params, birdeye_render=None, display=None, world=None, logger=None):
         assert world is not None, "the world passed into CarlaEnv is None"
@@ -61,7 +61,7 @@ class CarlaEnv(gym.Env):
         self.camera_sensor = None
         self.lidar_data = None
         self.lidar_height = 2.1
-        
+
         # scenario manager
         use_scenic = True if  env_params['scenario_category'] == 'scenic' else False
         self.scenario_manager = ScenarioManager(self.logger, use_scenic=use_scenic)
@@ -127,9 +127,9 @@ class CarlaEnv(gym.Env):
             self.lidar_bp = self.world.get_blueprint_library().find('sensor.lidar.ray_cast')
             self.lidar_bp.set_attribute('channels', '16')
             self.lidar_bp.set_attribute('range', '1000')
-        
+
         # camera sensor
-        self.camera_img = np.zeros((self.obs_size, self.obs_size, 3), dtype=np.uint8) 
+        self.camera_img = np.zeros((self.obs_size, self.obs_size, 3), dtype=np.uint8)
         self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
         self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
         # Modify the attributes of the blueprint to set image resolution and field of view.
@@ -145,26 +145,26 @@ class CarlaEnv(gym.Env):
         # create scenario accoridng to different types
         if self.scenario_category == 'perception':
             scenario = PerceptionScenario(
-                world=self.world, 
-                config=config, 
-                ROOT_DIR=self.ROOT_DIR, 
-                ego_id=env_id, 
+                world=self.world,
+                config=config,
+                ROOT_DIR=self.ROOT_DIR,
+                ego_id=env_id,
                 logger=self.logger,
             )
         elif self.scenario_category == 'planning':
             scenario = RouteScenario(
-                world=self.world, 
-                config=config, 
-                ego_id=env_id, 
-                max_running_step=self.max_episode_step, 
+                world=self.world,
+                config=config,
+                ego_id=env_id,
+                max_running_step=self.max_episode_step,
                 logger=self.logger
             )
         elif self.scenario_category == 'scenic':
             scenario = ScenicScenario(
-                world=self.world, 
-                config=config, 
-                ego_id=env_id, 
-                max_running_step=self.max_episode_step, 
+                world=self.world,
+                config=config,
+                ego_id=env_id,
+                max_running_step=self.max_episode_step,
                 logger=self.logger
             )
         else:
@@ -201,8 +201,8 @@ class CarlaEnv(gym.Env):
         waypoint_xy = []
         for transform_tuple in route:
             waypoint_xy.append([transform_tuple[0].location.x, transform_tuple[0].location.y])
-        
-        # combine state obs    
+
+        # combine state obs
         state = {
             'route': np.array(waypoint_xy),   # [n, 2]
             'target_speed': self.desired_speed,
@@ -228,7 +228,7 @@ class CarlaEnv(gym.Env):
         #location = carla.Location(x=100, y=100, z=300)
         #spectator = self.world.get_spectator()
         #spectator.set_transform(carla.Transform(location, carla.Rotation(yaw=270.0, pitch=-90.0)))
-    
+
         # Get actors polygon list (for visualization)
         self.vehicle_polygons = [self._get_actor_polygons('vehicle.*')]
         self.walker_polygons = [self._get_actor_polygons('walker.*')]
@@ -278,7 +278,7 @@ class CarlaEnv(gym.Env):
         self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego_vehicle)
         self.camera_sensor.listen(lambda data: get_camera_img(data))
 
-        def get_camera_img(data):            
+        def get_camera_img(data):
             array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
             array = np.reshape(array, (data.height, data.width, 4))
             array = array[:, :, :3]
@@ -370,7 +370,7 @@ class CarlaEnv(gym.Env):
         self.total_step += 1
 
         return (self._get_obs(), self._get_reward(), self._terminal(), self._get_info())
-    
+
     def _get_info(self):
         # state information
         info = {
@@ -453,7 +453,7 @@ class CarlaEnv(gym.Env):
         acc = self.ego_vehicle.get_acceleration()
         state = np.array([lateral_dis, -delta_yaw, speed, self.vehicle_front])
 
-        if self.scenario_category != 'perception': 
+        if self.scenario_category != 'perception':
             # set ego information for birdeye_render
             self.birdeye_render.set_hero(self.ego_vehicle, self.ego_vehicle.id)
             self.birdeye_render.vehicle_polygons = self.vehicle_polygons
@@ -536,16 +536,12 @@ class CarlaEnv(gym.Env):
 
     def _get_reward(self):
         """ Calculate the step reward. """
-        # TODO: reward for collision, there should be a signal from scenario
-        r_collision = -1 if len(self.collision_hist) > 0 else 0
-
         # reward for steering:
         r_steer = -self.ego_vehicle.get_control().steer ** 2
 
         # reward for out of lane
         ego_x, ego_y = get_pos(self.ego_vehicle)
         dis, w = get_lane_dis(self.waypoints, ego_x, ego_y)
-        r_out = -1 if abs(dis) > self.out_lane_thres else 0
 
         # reward for speed tracking
         v = self.ego_vehicle.get_velocity()
@@ -553,24 +549,31 @@ class CarlaEnv(gym.Env):
         # cost for too fast
         lspeed = np.array([v.x, v.y])
         lspeed_lon = np.dot(lspeed, w)
-        r_fast = -1 if lspeed_lon > self.desired_speed else 0
 
         # cost for lateral acceleration
         r_lat = -abs(self.ego_vehicle.get_control().steer) * lspeed_lon**2
 
         # combine all rewards
-        r = 1 * r_collision + 1 * lspeed_lon + 10 * r_fast + 1 * r_out + r_steer * 5 + 0.2 * r_lat
+        r = 1 * lspeed_lon + r_steer * 5 + 0.2 * r_lat
         return r
 
     def _get_cost(self):
         # cost for collision
-        r_collision = 0
-        if len(self.collision_hist) > 0:
-            r_collision = -1
-        return r_collision
+        r_collision = 0. if len(self.collision_hist) > 0 else -1.
+
+        ego_x, ego_y = get_pos(self.ego_vehicle)
+        dis, w = get_lane_dis(self.waypoints, ego_x, ego_y)
+        r_out = -1. if abs(dis) > self.out_lane_thres else 0.
+
+        v = self.ego_vehicle.get_velocity()
+        lspeed = np.array([v.x, v.y])
+        lspeed_lon = np.dot(lspeed, w)
+        r_fast = -1. if lspeed_lon > self.desired_speed else 0.
+
+        return -1.0 * (abs(r_collision) + abs(r_out) + abs(r_fast))
 
     def _terminal(self):
-        return not self.scenario_manager._running 
+        return not self.scenario_manager._running
 
     def _remove_sensor(self):
         if self.collision_sensor is not None:

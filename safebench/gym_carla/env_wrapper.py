@@ -1,7 +1,7 @@
-''' 
+'''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-04-03 19:30:36
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     This work is licensed under the terms of the MIT license.
@@ -14,7 +14,7 @@ import pygame
 
 
 class VectorWrapper():
-    """ 
+    """
         The interface to control a list of environments.
     """
 
@@ -23,7 +23,7 @@ class VectorWrapper():
         self.world = world
         self.num_scenario = scenario_config['num_scenario']
         self.ROOT_DIR = scenario_config['ROOT_DIR']
-        self.frame_skip = scenario_config['frame_skip']  
+        self.frame_skip = scenario_config['frame_skip']
         self.render = scenario_config['render']
 
         self.env_list = []
@@ -33,10 +33,10 @@ class VectorWrapper():
             self.env_list.append(env)
             self.action_space_list.append(env.action_space)
 
-        # flags for env list 
+        # flags for env list
         self.finished_env = [False] * self.num_scenario
         self.running_results = {}
-    
+
     def obs_postprocess(self, obs_list):
         # assume all variables are array
         obs_list = np.array(obs_list)
@@ -72,7 +72,7 @@ class VectorWrapper():
         self.finished_env = [False] * self.num_scenario
         for s_i in range(len(scenario_configs), self.num_scenario):
             self.finished_env[s_i] = True
-        
+
         # store scenario id
         for s_i in range(len(scenario_configs)):
             info_list[s_i].update({'scenario_id': s_i})
@@ -93,7 +93,7 @@ class VectorWrapper():
                 # TODO: pre-process scenario action
                 self.env_list[e_i].step_before_tick(processed_action, scenario_actions[action_idx])
                 action_idx += 1
-        
+
         # tick all scenarios
         for _ in range(self.frame_skip):
             self.world.tick()
@@ -101,6 +101,7 @@ class VectorWrapper():
         # collect new observation of one frame
         obs_list = []
         reward_list = []
+        risk_list = []
         done_list = []
         info_list = []
         for e_i in range(self.num_scenario):
@@ -122,18 +123,20 @@ class VectorWrapper():
                 # update infomation
                 obs_list.append(obs)
                 reward_list.append(reward)
+                risk_list.append(np.abs(info['cost']))
                 done_list.append(done)
                 info_list.append(info)
-        
+
         # convert to numpy
         rewards = np.array(reward_list)
+        risks = np.array(risk_list)
         dones = np.array(done_list)
         infos = np.array(info_list)
 
         # update pygame window
         if self.render:
             pygame.display.flip()
-        return self.obs_postprocess(obs_list), rewards, dones, infos
+        return self.obs_postprocess(obs_list), rewards, risks, dones, infos
 
     # def sample_action_space(self):
     #     action = []
@@ -215,7 +218,7 @@ class ObservationWrapper(gym.Wrapper):
         elif self.obs_type == 1:
             new_obs = np.array([
                 obs['state'][0], obs['state'][1], obs['state'][2], obs['state'][3],
-                obs['command'], 
+                obs['command'],
                 obs['forward_vector'][0], obs['forward_vector'][1],
                 obs['node_forward'][0], obs['node_forward'][1],
                 obs['target_forward'][0], obs['target_forward'][1]
@@ -243,12 +246,12 @@ class ObservationWrapper(gym.Wrapper):
 def carla_env(env_params, birdeye_render=None, display=None, world=None, logger=None):
     return ObservationWrapper(
         gym.make(
-            'carla-v0', 
-            env_params=env_params, 
+            'carla-v0',
+            env_params=env_params,
             birdeye_render=birdeye_render,
-            display=display, 
-            world=world, 
+            display=display,
+            world=world,
             logger=logger,
-        ), 
+        ),
         obs_type=env_params['obs_type']
     )
