@@ -536,25 +536,16 @@ class CarlaEnv(gym.Env):
 
     def _get_reward(self):
         """ Calculate the step reward. """
-        # reward for steering:
-        r_steer = -self.ego_vehicle.get_control().steer ** 2
-
-        # reward for out of lane
-        ego_x, ego_y = get_pos(self.ego_vehicle)
-        dis, w = get_lane_dis(self.waypoints, ego_x, ego_y)
-
         # reward for speed tracking
         v = self.ego_vehicle.get_velocity()
 
-        # cost for too fast
+        ego_x, ego_y = get_pos(self.ego_vehicle)
+        _, w = get_lane_dis(self.waypoints, ego_x, ego_y)
         lspeed = np.array([v.x, v.y])
         lspeed_lon = np.dot(lspeed, w)
 
-        # cost for lateral acceleration
-        r_lat = -abs(self.ego_vehicle.get_control().steer) * lspeed_lon**2
-
         # combine all rewards
-        r = 1 * lspeed_lon + r_steer * 5 + 0.2 * r_lat
+        r = 1 * lspeed_lon
         return r
 
     def _get_cost(self):
