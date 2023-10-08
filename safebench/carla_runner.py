@@ -196,8 +196,10 @@ class CarlaRunner:
             self.agent_policy.set_ego_and_route(self.env.get_ego_vehicles(), infos)
 
             # start loop
+            from collections import defaultdict
             episode_reward = []
             rewards_, risks_ = [], []
+            infos_ = defaultdict(float)
             while not self.env.all_scenario_done():
                 # get action from agent policy and scenario policy (assume using one batch)
                 ego_task_actions, ego_actions = self.agent_policy.get_action(obs, infos, deterministic=False)
@@ -211,6 +213,9 @@ class CarlaRunner:
 
                 rewards_.append(rewards)
                 risks_.append(risks)
+                for ii in range(len(infos)):
+                    for k in infos[ii]["cost_dict"]:
+                        infos_[k] += infos[ii]["cost_dict"][k]
 
             for _ in range(20):
                 # train off-policy agent or scenario
@@ -221,7 +226,7 @@ class CarlaRunner:
 
             rewards_ = np.concatenate(rewards_, -1)
             risks_ = np.concatenate(risks_, -1)
-            print('return: ', np.sum(rewards_, 0), 'risks ', np.sum(risks_, 0))
+            print('return: ', np.sum(rewards_, 0), 'risks ', infos_)
 
 
             # end up environment

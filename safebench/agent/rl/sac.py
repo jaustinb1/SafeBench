@@ -37,8 +37,8 @@ class Actor(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         mu = self.tanh(self.fc_mu(x))
-        std = self.softplus(self.fc_std(x)) + self.min_val
-        return mu, std
+        logstd = self.fc_std(x)
+        return mu, logstd
 
 
 class Critic(nn.Module):
@@ -125,7 +125,7 @@ class SAC(BasePolicy):
         self.Q_criterion = nn.MSELoss()
         self.Q_risk_criterion = nn.MSELoss()
 
-        self.risk_thresh = 0.05
+        self.risk_thresh = 0.1
 
         # copy parameters
         for target_param, param in zip(self.Target_value_net.parameters(), self.value_net.parameters()):
@@ -171,7 +171,7 @@ class SAC(BasePolicy):
         task_action = sample(mu_task, log_sigma_task)
 
         risk = self.Q_risk_net(state, task_action)
-        if risk.detach().cpu().numpy().ravel()[0] > self.risk_thresh:
+        if risk.detach().cpu().numpy().ravel()[0] < -self.risk_thresh:
             mu_rec, log_sigma_rec = self.policy_recovery_net(state)
             action = sample(mu_rec, log_sigma_rec)
         else:
@@ -185,7 +185,10 @@ class SAC(BasePolicy):
         dist = Normal(batch_mu, batch_sigma)
         z = dist.sample()
         task_action = torch.tanh(z)
-        task_log_prob = dist.log_prob(z) - torch.log(1 - task_action.pow(2) + self.min_Val)
+
+        zeros = torch.zeros_like(task_action)
+
+        task_log_prob = dist.log_prob(z) - torch.log(torch.maximum(1 - task_action.pow(2) + self.min_Val, zeros) + 1e-3)
         # when action has more than 1 dimensions, we should sum up the log likelihood
         task_log_prob = torch.sum(task_log_prob, dim=1, keepdim=True)
 
@@ -195,16 +198,16 @@ class SAC(BasePolicy):
         z_rec = dist_rec.sample()
         recovery_action = torch.tanh(z_rec)
 
-        recovery_log_prob = dist_rec.log_prob(z_rec) - torch.log(1 - recovery_action.pow(2) + 1e-3)
+        recovery_log_prob = dist_rec.log_prob(z_rec) - torch.log(torch.maximum(1 - recovery_action.pow(2) + self.min_Val, zeros) + 1e-3)
         recovery_log_prob = torch.sum(recovery_log_prob, dim=1, keepdim=True)
 
-        recovery_log_prob_2 = dist_rec.log_prob(z) #- torch.log(1. - task_action.pow(2) + self.min_Val)
+        recovery_log_prob_2 = dist_rec.log_prob(z.detach()) - torch.log(torch.maximum(1. - task_action.detach().pow(2) + self.min_Val, zeros) + 1e-3)
         recovery_log_prob_2 = torch.sum(recovery_log_prob, dim=1, keepdim=True)
 
         risk = self.Q_risk_net(state, task_action).detach()
-        recovery_active = risk.detach() > self.risk_thresh
+        recovery_active = risk.detach() < -self.risk_thresh
         recovery_active = recovery_active.float()
-        action = recovery_action #* recovery_active + (1. - recovery_active) * task_action
+        action = recovery_action #* recovery_active + (1. - recovery_active) * task_action.detach()
         log_prob = recovery_log_prob #* recovery_active + (1. - recovery_active) * recovery_log_prob_2
 
         return {
@@ -227,7 +230,7 @@ class SAC(BasePolicy):
             bn_a_task = CUDA(torch.FloatTensor(batch['task_action']))
             bn_a_mixed = CUDA(torch.FloatTensor(batch['mixed_action']))
             bn_r = CUDA(torch.FloatTensor(batch['reward'])).unsqueeze(-1) # [B, 1]
-            bn_r_risk = CUDA(torch.FloatTensor(batch['risk'])).unsqueeze(-1)
+            bn_r_risk = CUDA(-torch.FloatTensor(batch['risk'])).unsqueeze(-1)
             bn_s_ = CUDA(torch.FloatTensor(batch['n_state']))
             bn_d = CUDA(torch.FloatTensor(1-batch['done'])).unsqueeze(-1) # [B, 1]
 
@@ -264,7 +267,7 @@ class SAC(BasePolicy):
             log_policy_recovery_target = expected_new_Q_risk - expected_value_risk
             pi_loss = actions_log_probs["task_log_prob"] * (actions_log_probs["task_log_prob"] - log_policy_target).detach()
 
-            pi_recovery_loss = actions_log_probs["mixed_log_prob"] * (-log_policy_recovery_target).detach()
+            pi_recovery_loss = actions_log_probs["mixed_log_prob"] * (actions_log_probs["mixed_log_prob"] - log_policy_recovery_target).detach()
             pi_loss = pi_loss.mean()
             pi_recovery_loss = pi_recovery_loss.mean()
 
