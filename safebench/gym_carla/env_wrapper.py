@@ -11,7 +11,7 @@ Description:
 import gym
 import numpy as np
 import pygame
-
+import cv2
 
 class VectorWrapper():
     """
@@ -226,6 +226,14 @@ class ObservationWrapper(gym.Wrapper):
             return new_obs
         # return a dictionary with bird-eye view image and state
         elif self.obs_type == 2:
+
+            img = obs['birdeye']
+            img = cv2.resize(img, dsize=(128, 128), interpolation=cv2.INTER_CUBIC)
+            img = np.transpose(img, [2, 0, 1]).ravel().astype(np.float64)
+            return np.concatenate([
+                np.reshape(img / 255., [-1,]), obs['state'][:4].astype(np.float64)], axis=-1)
+
+            return obs['birdeye']
             return {"img": obs['birdeye'], "states": obs['state'][:4].astype(np.float64)}
         # return a dictionary with front-view image and state
         elif self.obs_type == 3:

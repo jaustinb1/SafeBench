@@ -22,9 +22,9 @@ scenario_state_dim: 18 # 2*9 - actor number * actor info dim
 scenario_action_dim: 1
 
 # for SAC policy model
-model_path: 'safebench/scenario/scenario_data/model_ckpt/sac'
+model_path: 'safebench/scenario/scenario_data/model_ckpt/sac_supression_obs_1'
 model_id: 1
-train_episode: 2000
+train_episode: 167
 save_freq: 1
 eval_in_train_freq: 10
 buffer_capacity: 10000
@@ -35,3 +35,4 @@ update_iteration: 3
 gamma: 0.99
 batch_size: 32
 min_Val: 1.0e-7
+use_suppression: True

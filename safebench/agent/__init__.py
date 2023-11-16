@@ -1,7 +1,7 @@
 '''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-03-06 00:21:23
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     This work is licensed under the terms of the MIT license.
@@ -19,7 +19,7 @@ from safebench.agent.behavior import CarlaBehaviorAgent
 
 # for perception scenario
 from safebench.agent.object_detection.yolov5 import YoloAgent
-from safebench.agent.object_detection.faster_rcnn import FasterRCNNAgent
+#from safebench.agent.object_detection.faster_rcnn import FasterRCNNAgent
 
 AGENT_POLICY_LIST = {
     'dummy': DummyAgent,
@@ -30,5 +30,5 @@ AGENT_POLICY_LIST = {
     'ddpg': DDPG,
     'ppo': PPO,
     'td3': TD3,
-    'faster_rcnn': FasterRCNNAgent,
+    #'faster_rcnn': FasterRCNNAgent,
 }

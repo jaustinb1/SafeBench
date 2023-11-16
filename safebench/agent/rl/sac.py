@@ -19,12 +19,27 @@ from torch.distributions import Normal
 from safebench.util.torch_util import CUDA, CPU, kaiming_init
 from safebench.agent.base_policy import BasePolicy
 
+def make_conv():
+    return nn.Sequential(
+        nn.Conv2d(3, 32, kernel_size=4, stride=1, padding=0), # 128
+        nn.ReLU(),
+        nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=0), # 62
+        nn.ReLU(),
+        nn.Conv2d(32, 16, kernel_size=3, stride=2, padding=0), # 30
+        nn.ReLU(),
+        nn.Conv2d(16, 8, kernel_size=3, stride=2, padding=0), # 14
+        nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(14 * 14 * 8, 256),
+        nn.ReLU(),
+    )
 
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Actor, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 64)
-        self.fc2 = nn.Linear(64, 256)
+        self.conv = make_conv()
+        self.fc1 = nn.Linear(256+4, 256)
+        self.fc2 = nn.Linear(256, 256)
         self.fc_mu = nn.Linear(256, action_dim)
         self.fc_std = nn.Linear(256, action_dim)
         self.relu = nn.ReLU()
@@ -34,7 +49,13 @@ class Actor(nn.Module):
         self.apply(kaiming_init)
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
+        x1 = x[:,:-4]
+        x2 = x[:,-4:]
+        x1 = x1.reshape(-1, 3, 128, 128)
+        x2 = x2.reshape(-1, 4)
+
+        e1 = self.conv(x1)
+        x = self.relu(self.fc1(torch.cat((e1, x2), -1)))
         x = self.relu(self.fc2(x))
         mu = self.tanh(self.fc_mu(x))
         logstd = self.fc_std(x)
@@ -44,14 +65,21 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, state_dim):
         super(Critic, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 64)
-        self.fc2 = nn.Linear(64, 256)
+        self.conv = make_conv()
+        self.fc1 = nn.Linear(256+4, 256)
+        self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 1)
         self.relu = nn.ReLU()
         self.apply(kaiming_init)
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
+        x1 = x[:,:-4]
+        x2 = x[:,-4:]
+        x1 = x1.reshape(-1, 3, 128, 128)
+        x2 = x2.reshape(-1, 4)
+
+        e1 = self.conv(x1)
+        x = self.relu(self.fc1(torch.cat((e1, x2), -1)))
         x = self.relu(self.fc2(x))
         x = self.fc3(x)
         return x
@@ -61,17 +89,24 @@ class Q(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Q, self).__init__()
         self.action_dim = action_dim
-        self.state_dim = state_dim
-        self.fc1 = nn.Linear(state_dim+action_dim, 256)
+        self.conv = make_conv()
+        self.state_dim = 256 + 4
+        self.fc1 = nn.Linear(256+4+action_dim, 256)
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 1)
         self.relu = nn.ReLU()
         self.apply(kaiming_init)
 
     def forward(self, x, a):
-        x = x.reshape(-1, self.state_dim)
+        x1 = x[:,:-4]
+        x2 = x[:,-4:]
+        x1 = x1.reshape(-1, 3, 128, 128)
+        x2 = x2.reshape(-1, 4)
+
+        e1 = self.conv(x1)
+
         a = a.reshape(-1, self.action_dim)
-        x = torch.cat((x, a), -1) # combination x and a
+        x = torch.cat((e1, x2, a), -1) # combination x and a
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.fc3(x)
@@ -84,6 +119,14 @@ class SAC(BasePolicy):
 
     def __init__(self, config, logger):
         self.logger = logger
+
+        self.use_suppression = True #config['use_suppression']
+        self.use_recovery = True
+        if self.use_suppression:
+            assert self.use_recovery
+
+        self.lam = 2.0
+        #assert self.use_suppression
 
         self.buffer_start_training = config['buffer_start_training']
         self.lr = config['lr']
@@ -103,35 +146,39 @@ class SAC(BasePolicy):
 
         # create models
         self.policy_net = CUDA(Actor(self.state_dim, self.action_dim))
-        self.policy_recovery_net = CUDA(Actor(self.state_dim, self.action_dim))
         self.value_net = CUDA(Critic(self.state_dim))
-        self.value_risk_net = CUDA(Critic(self.state_dim))
         self.Q_net = CUDA(Q(self.state_dim, self.action_dim))
-        self.Q_risk_net = CUDA(Q(self.state_dim, self.action_dim))
         self.Target_value_net = CUDA(Critic(self.state_dim))
-        self.Target_value_risk_net = CUDA(Critic(self.state_dim))
+        if self.use_recovery:
+            self.value_risk_net = CUDA(Critic(self.state_dim))
+            self.policy_recovery_net = CUDA(Actor(self.state_dim, self.action_dim))
+            self.Q_risk_net = CUDA(Q(self.state_dim, self.action_dim))
+            self.Target_value_risk_net = CUDA(Critic(self.state_dim))
 
         # create optimizer
         self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
-        self.policy_recovery_optimizer = optim.Adam(self.policy_recovery_net.parameters(), lr=self.lr)
         self.value_optimizer = optim.Adam(self.value_net.parameters(), lr=self.lr)
-        self.value_risk_optimizer = optim.Adam(self.value_risk_net.parameters(), lr=self.lr)
         self.Q_optimizer = optim.Adam(self.Q_net.parameters(), lr=self.lr)
-        self.Q_risk_optimizer = optim.Adam(self.Q_risk_net.parameters(), lr=self.lr)
+        if self.use_recovery:
+            self.policy_recovery_optimizer = optim.Adam(self.policy_recovery_net.parameters(), lr=self.lr)
+            self.value_risk_optimizer = optim.Adam(self.value_risk_net.parameters(), lr=self.lr)
+            self.Q_risk_optimizer = optim.Adam(self.Q_risk_net.parameters(), lr=self.lr)
 
         # define loss function
         self.value_criterion = nn.MSELoss()
-        self.value_risk_criterion = nn.MSELoss()
         self.Q_criterion = nn.MSELoss()
-        self.Q_risk_criterion = nn.MSELoss()
+        if self.use_recovery:
+            self.value_risk_criterion = nn.MSELoss()
+            self.Q_risk_criterion = nn.MSELoss()
 
         self.risk_thresh = 0.1
 
         # copy parameters
         for target_param, param in zip(self.Target_value_net.parameters(), self.value_net.parameters()):
             target_param.data.copy_(param.data)
-        for target_param, param in zip(self.Target_value_risk_net.parameters(), self.value_risk_net.parameters()):
-            target_param.data.copy_(param.data)
+        if self.use_recovery:
+            for target_param, param in zip(self.Target_value_risk_net.parameters(), self.value_risk_net.parameters()):
+                target_param.data.copy_(param.data)
 
         self.mode = 'train'
 
@@ -139,18 +186,20 @@ class SAC(BasePolicy):
         self.mode = mode
         if mode == 'train':
             self.policy_net.train()
-            self.policy_recovery_net.train()
             self.value_net.train()
-            self.value_risk_net.train()
             self.Q_net.train()
-            self.Q_risk_net.train()
+            if self.use_recovery:
+                self.policy_recovery_net.train()
+                self.value_risk_net.train()
+                self.Q_risk_net.train()
         elif mode == 'eval':
             self.policy_net.eval()
-            self.policy_recovery_net.eval()
             self.value_net.eval()
-            self.value_risk_net.eval()
             self.Q_net.eval()
-            self.Q_risk_net.eval()
+            if self.use_recovery:
+                self.policy_recovery_net.eval()
+                self.value_risk_net.eval()
+                self.Q_risk_net.eval()
         else:
             raise ValueError(f'Unknown mode {mode}')
 
@@ -170,10 +219,13 @@ class SAC(BasePolicy):
 
         task_action = sample(mu_task, log_sigma_task)
 
-        risk = self.Q_risk_net(state, task_action)
-        if risk.detach().cpu().numpy().ravel()[0] < -self.risk_thresh:
-            mu_rec, log_sigma_rec = self.policy_recovery_net(state)
-            action = sample(mu_rec, log_sigma_rec)
+        if self.use_recovery:
+            risk = self.Q_risk_net(state, task_action)
+            if risk.detach().cpu().numpy().ravel()[0] < -self.risk_thresh:
+                mu_rec, log_sigma_rec = self.policy_recovery_net(state)
+                action = sample(mu_rec, log_sigma_rec)
+            else:
+                action = task_action
         else:
             action = task_action
 
@@ -192,23 +244,27 @@ class SAC(BasePolicy):
         # when action has more than 1 dimensions, we should sum up the log likelihood
         task_log_prob = torch.sum(task_log_prob, dim=1, keepdim=True)
 
-        batch_mu_rec, batch_log_sigma_rec = self.policy_recovery_net(state)
-        batch_sigma_rec = torch.exp(batch_log_sigma_rec)
-        dist_rec = Normal(batch_mu_rec, batch_sigma_rec)
-        z_rec = dist_rec.sample()
-        recovery_action = torch.tanh(z_rec)
+        if self.use_recovery:
+            batch_mu_rec, batch_log_sigma_rec = self.policy_recovery_net(state)
+            batch_sigma_rec = torch.exp(batch_log_sigma_rec)
+            dist_rec = Normal(batch_mu_rec, batch_sigma_rec)
+            z_rec = dist_rec.sample()
+            recovery_action = torch.tanh(z_rec)
 
-        recovery_log_prob = dist_rec.log_prob(z_rec) - torch.log(torch.maximum(1 - recovery_action.pow(2) + self.min_Val, zeros) + 1e-3)
-        recovery_log_prob = torch.sum(recovery_log_prob, dim=1, keepdim=True)
+            recovery_log_prob = dist_rec.log_prob(z_rec) - torch.log(torch.maximum(1 - recovery_action.pow(2) + self.min_Val, zeros) + 1e-3)
+            recovery_log_prob = torch.sum(recovery_log_prob, dim=1, keepdim=True)
 
-        recovery_log_prob_2 = dist_rec.log_prob(z.detach()) - torch.log(torch.maximum(1. - task_action.detach().pow(2) + self.min_Val, zeros) + 1e-3)
-        recovery_log_prob_2 = torch.sum(recovery_log_prob, dim=1, keepdim=True)
+            recovery_log_prob_2 = dist_rec.log_prob(z.detach()) - torch.log(torch.maximum(1. - task_action.detach().pow(2) + self.min_Val, zeros) + 1e-3)
+            recovery_log_prob_2 = torch.sum(recovery_log_prob, dim=1, keepdim=True)
 
-        risk = self.Q_risk_net(state, task_action).detach()
-        recovery_active = risk.detach() < -self.risk_thresh
-        recovery_active = recovery_active.float()
-        action = recovery_action #* recovery_active + (1. - recovery_active) * task_action.detach()
-        log_prob = recovery_log_prob #* recovery_active + (1. - recovery_active) * recovery_log_prob_2
+            risk = self.Q_risk_net(state, task_action).detach()
+            recovery_active = risk.detach() < -self.risk_thresh
+            recovery_active = recovery_active.float()
+            action = recovery_action #* recovery_active + (1. - recovery_active) * task_action.detach()
+            log_prob = recovery_log_prob #* recovery_active + (1. - recovery_active) * recovery_log_prob_2
+        else:
+            action = task_action
+            log_prob = task_log_prob
 
         return {
             "task_action": task_action,
@@ -234,42 +290,63 @@ class SAC(BasePolicy):
             bn_s_ = CUDA(torch.FloatTensor(batch['n_state']))
             bn_d = CUDA(torch.FloatTensor(1-batch['done'])).unsqueeze(-1) # [B, 1]
 
+            if not self.use_recovery:
+                bn_r = bn_r + self.lam * bn_r_risk
+
             target_value = self.Target_value_net(bn_s_)
-            target_value_risk = self.Target_value_risk_net(bn_s_)
             next_q_value = bn_r + bn_d * self.gamma * target_value
-            next_q_risk_value = bn_r_risk + bn_d * self.gamma * target_value_risk
+            if self.use_recovery:
+                target_value_risk = self.Target_value_risk_net(bn_s_)
+                next_q_risk_value = bn_r_risk + bn_d * self.gamma * target_value_risk
+                max_terminal = torch.clamp(bn_r_risk / (1. - self.gamma) * (1. - bn_d) - bn_r_risk, 0.0, 50. / (1. - self.gamma))
+                next_q_risk_value += max_terminal
 
             expected_value = self.value_net(bn_s)
-            expected_value_risk = self.value_risk_net(bn_s)
             expected_Q = self.Q_net(bn_s, bn_a_task)
-            expected_Q_risk = self.Q_risk_net(bn_s, bn_a_mixed)
+            if self.use_recovery:
+                expected_value_risk = self.value_risk_net(bn_s)
+                expected_Q_risk = self.Q_risk_net(bn_s, bn_a_mixed)
 
             actions_log_probs = self.get_action_log_prob(bn_s)
             expected_new_Q = self.Q_net(bn_s, actions_log_probs["task_action"])
-            expected_new_Q_risk = self.Q_risk_net(bn_s, actions_log_probs["mixed_action"])
+            if self.use_recovery:
+                expected_new_Q_risk = self.Q_risk_net(bn_s, actions_log_probs["mixed_action"])
 
             next_value = expected_new_Q - actions_log_probs["task_log_prob"]
-            next_value_risk = expected_new_Q_risk - actions_log_probs["mixed_log_prob"]
+            if self.use_recovery:
+                next_value_risk = expected_new_Q_risk - actions_log_probs["mixed_log_prob"]
 
             # !!! Note that the actions are sampled according to the current policy, instead of replay buffer. (From original paper)
             V_loss = self.value_criterion(expected_value, next_value.detach())  # J_V
-            V_risk_loss = self.value_risk_criterion(expected_value_risk, next_value_risk.detach())
             V_loss = V_loss.mean()
-            V_risk_loss = V_risk_loss.mean()
+            if self.use_recovery:
+                V_risk_loss = self.value_risk_criterion(expected_value_risk, next_value_risk.detach())
+                V_risk_loss = V_risk_loss.mean()
 
             # Single Q_net this is different from original paper!!!
             Q_loss = self.Q_criterion(expected_Q, next_q_value.detach()) # J_Q
-            Q_risk_loss = self.Q_risk_criterion(expected_Q_risk, next_q_risk_value.detach())
             Q_loss = Q_loss.mean()
-            Q_risk_loss = Q_risk_loss.mean()
+            if self.use_recovery:
+                Q_risk_loss = self.Q_risk_criterion(expected_Q_risk, next_q_risk_value.detach())
+                Q_risk_loss = Q_risk_loss.mean()
 
             log_policy_target = expected_new_Q - expected_value
-            log_policy_recovery_target = expected_new_Q_risk - expected_value_risk
+            if self.use_recovery:
+                log_policy_recovery_target = expected_new_Q_risk - expected_value_risk
+                if self.use_suppression:
+                    suppression_weight = torch.ones_like(expected_new_Q_risk) * 10.0
+                    gate = -expected_new_Q_risk * suppression_weight
+                    gate = torch.clamp(gate * 2, 0.25, 0.75).detach()
+
+                    #print(gate, log_policy_target, log_policy_recovery_target)
+                    log_policy_target = log_policy_target * (1. - gate) + gate * log_policy_recovery_target.detach()
+
             pi_loss = actions_log_probs["task_log_prob"] * (actions_log_probs["task_log_prob"] - log_policy_target).detach()
 
-            pi_recovery_loss = actions_log_probs["mixed_log_prob"] * (actions_log_probs["mixed_log_prob"] - log_policy_recovery_target).detach()
             pi_loss = pi_loss.mean()
-            pi_recovery_loss = pi_recovery_loss.mean()
+            if self.use_recovery:
+                pi_recovery_loss = actions_log_probs["mixed_log_prob"] * (actions_log_probs["mixed_log_prob"] - log_policy_recovery_target).detach()
+                pi_recovery_loss = pi_recovery_loss.mean()
 
             # mini batch gradient descent
             self.value_optimizer.zero_grad()
@@ -277,46 +354,51 @@ class SAC(BasePolicy):
             nn.utils.clip_grad_norm_(self.value_net.parameters(), 0.5)
             self.value_optimizer.step()
 
-            self.value_risk_optimizer.zero_grad()
-            V_risk_loss.backward(retain_graph=True)
-            nn.utils.clip_grad_norm_(self.value_risk_net.parameters(), 0.5)
-            self.value_risk_optimizer.step()
-
             self.Q_optimizer.zero_grad()
             Q_loss.backward(retain_graph=True)
             nn.utils.clip_grad_norm_(self.Q_net.parameters(), 0.5)
             self.Q_optimizer.step()
-
-            self.Q_risk_optimizer.zero_grad()
-            Q_risk_loss.backward(retain_graph=True)
-            nn.utils.clip_grad_norm_(self.Q_risk_net.parameters(), 0.5)
-            self.Q_risk_optimizer.step()
 
             self.policy_optimizer.zero_grad()
             pi_loss.backward(retain_graph=True)
             nn.utils.clip_grad_norm_(self.policy_net.parameters(), 0.5)
             self.policy_optimizer.step()
 
-            self.policy_recovery_optimizer.zero_grad()
-            pi_recovery_loss.backward(retain_graph=True)
-            nn.utils.clip_grad_norm_(self.policy_recovery_net.parameters(), 0.5)
-            self.policy_recovery_optimizer.step()
+            if self.use_recovery:
+                self.value_risk_optimizer.zero_grad()
+                V_risk_loss.backward(retain_graph=True)
+                nn.utils.clip_grad_norm_(self.value_risk_net.parameters(), 0.5)
+                self.value_risk_optimizer.step()
+
+                self.Q_risk_optimizer.zero_grad()
+                Q_risk_loss.backward(retain_graph=True)
+                nn.utils.clip_grad_norm_(self.Q_risk_net.parameters(), 0.5)
+                self.Q_risk_optimizer.step()
+
+                self.policy_recovery_optimizer.zero_grad()
+                pi_recovery_loss.backward(retain_graph=True)
+                nn.utils.clip_grad_norm_(self.policy_recovery_net.parameters(), 0.5)
+                self.policy_recovery_optimizer.step()
 
             # soft update
             for target_param, param in zip(self.Target_value_net.parameters(), self.value_net.parameters()):
                 target_param.data.copy_(target_param * (1 - self.tau) + param * self.tau)
-            for target_param, param in zip(self.Target_value_risk_net.parameters(), self.value_risk_net.parameters()):
-                target_param.data.copy_(target_param * (1 - self.tau) + param * self.tau)
+            if self.use_recovery:
+                for target_param, param in zip(self.Target_value_risk_net.parameters(), self.value_risk_net.parameters()):
+                    target_param.data.copy_(target_param * (1 - self.tau) + param * self.tau)
 
     def save_model(self, episode):
         states = {
             'policy_net': self.policy_net.state_dict(),
-            'policy_recovery_net': self.policy_recovery_net.state_dict(),
             'value_net': self.value_net.state_dict(),
-            'value_risk_net': self.value_risk_net.state_dict(),
             'Q_net': self.Q_net.state_dict(),
-            'Q_risk_net': self.Q_risk_net.state_dict(),
         }
+        if self.use_recovery:
+            states.update({
+                'policy_recovery_net': self.policy_recovery_net.state_dict(),
+                'value_risk_net': self.value_risk_net.state_dict(),
+                'Q_risk_net': self.Q_risk_net.state_dict(),
+            })
         filepath = os.path.join(self.model_path, f'model.sac.{self.model_id}.{episode:04}.torch')
         self.logger.log(f'>> Saving {self.name} model to {filepath}')
         with open(filepath, 'wb+') as f:
@@ -337,11 +419,12 @@ class SAC(BasePolicy):
             with open(filepath, 'rb') as f:
                 checkpoint = torch.load(f)
             self.policy_net.load_state_dict(checkpoint['policy_net'])
-            self.policy_recovery_net.load_state_dict(checkpoint['policy_recovery_net'])
             self.value_net.load_state_dict(checkpoint['value_net'])
-            self.value_risk_net.load_state_dict(checkpoint['value_risk_net'])
             self.Q_net.load_state_dict(checkpoint['Q_net'])
-            self.Q_risk_net.load_state_dict(checkpoint['Q_risk_net'])
             self.continue_episode = episode
+            if self.use_recovery:
+                self.policy_recovery_net.load_state_dict(checkpoint['policy_recovery_net'])
+                self.value_risk_net.load_state_dict(checkpoint['value_risk_net'])
+                self.Q_risk_net.load_state_dict(checkpoint['Q_risk_net'])
         else:
             self.logger.log(f'>> No {self.name} model found at {filepath}', 'red')

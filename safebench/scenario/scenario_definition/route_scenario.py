@@ -1,7 +1,7 @@
-''' 
+'''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-04-03 20:22:30
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     This file is modified from <https://github.com/carla-simulator/scenario_runner/blob/master/srunner/scenarios/route_scenario.py>
@@ -23,9 +23,9 @@ from safebench.scenario.scenario_manager.scenario_config import RouteScenarioCon
 from safebench.scenario.tools.route_parser import RouteParser
 from safebench.scenario.tools.route_manipulation import interpolate_trajectory
 from safebench.scenario.tools.scenario_utils import (
-    get_valid_spawn_points, 
-    convert_json_to_transform, 
-    convert_json_to_actor, 
+    get_valid_spawn_points,
+    convert_json_to_transform,
+    convert_json_to_actor,
     convert_transform_to_location
 )
 
@@ -83,7 +83,7 @@ class RouteScenario():
         else:
             route = interpolate_trajectory(self.world, self.config.trajectory)
             ego_vehicle = self._spawn_ego_vehicle(route[0][0], self.config.auto_ego)
-        
+
         # scan route to get exactly 1 scenario definition
         possible_scenarios, _ = RouteParser.scan_route_for_scenarios(
             self.config.town,
@@ -91,7 +91,7 @@ class RouteScenario():
             world_annotations,
             scenario_id=scenario_id
         )
-        
+
         scenarios_definitions = []
         for trigger in possible_scenarios.keys():
             scenarios_definitions.extend(possible_scenarios[trigger])
@@ -140,7 +140,7 @@ class RouteScenario():
                 ego_vehicle = CarlaDataProvider.request_new_actor(
                     'vehicle.lincoln.mkz_2017',
                     elevate_transform,
-                    rolename=role_name, 
+                    rolename=role_name,
                     autopilot=autopilot
                 )
                 ego_vehicle.set_autopilot(autopilot, CarlaDataProvider.get_traffic_manager_port())
@@ -181,7 +181,7 @@ class RouteScenario():
 
             try:
                 scenario_instance = scenario_class(self.world, self.ego_vehicle, route_config, timeout=self.timeout)
-            except Exception as e:   
+            except Exception as e:
                 traceback.print_exc()
                 print("Skipping scenario '{}' due to setup error: {}".format(definition['name'], e))
                 continue
@@ -207,13 +207,13 @@ class RouteScenario():
         return list_of_actors
 
     def initialize_actors(self):
-        amount = 0 
+        amount = 0
         new_actors = CarlaDataProvider.request_new_batch_actors(
-            'vehicle.*', 
-            amount, 
-            carla.Transform(), 
-            autopilot=True, 
-            random_location=True, 
+            'vehicle.*',
+            amount,
+            carla.Transform(),
+            autopilot=True,
+            random_location=True,
             rolename='background'
         )
         if new_actors is None:
@@ -251,27 +251,27 @@ class RouteScenario():
             self.logger.log('>> Scenario stops due to off road', color='yellow')
 
         # only check when evaluating
-        if self.config.scenario_id != 0:  
+        if self.config.scenario_id != 0:
             # route completed
             if running_status['route_complete'] == 100:
                 stop = True
                 self.logger.log('>> Scenario stops due to route completion', color='yellow')
 
         # stop at max step
-        if len(running_record) >= self.max_running_step: 
+        if len(running_record) >= self.max_running_step:
             stop = True
             self.logger.log('>> Scenario stops due to max steps', color='yellow')
 
         for scenario in self.list_scenarios:
             # only check when evaluating
-            if self.config.scenario_id != 0:  
+            if self.config.scenario_id != 0:
                 if running_status['driven_distance'] >= scenario.ego_max_driven_distance:
                     stop = True
                     self.logger.log('>> Scenario stops due to max driven distance', color='yellow')
                     break
             if running_status['current_game_time'] >= scenario.timeout:
                 stop = True
-                self.logger.log('>> Scenario stops due to timeout', color='yellow') 
+                self.logger.log('>> Scenario stops due to timeout', color='yellow')
                 break
 
         return running_status, stop

@@ -160,7 +160,7 @@ class CarlaRunner:
             if self.env_params['disable_lidar']:
                 window_size = (self.env_params['display_size'] * 2, self.env_params['display_size'] * self.num_scenario)
             else:
-                window_size = (self.env_params['display_size'] * 3, self.env_params['display_size'] * self.num_scenario)
+                window_size = (self.env_params['display_size'], self.env_params['display_size'] * self.num_scenario)
         else:
             window_size = (self.env_params['display_size'], self.env_params['display_size'] * self.num_scenario)
         self.display = pygame.display.set_mode(window_size, flag)
@@ -173,6 +173,7 @@ class CarlaRunner:
             'pixels_per_meter': pixels_per_meter,
             'pixels_ahead_vehicle': pixels_ahead_vehicle,
         }
+        print(self.birdeye_params)
         self.birdeye_render = BirdeyeRender(self.world, self.birdeye_params, logger=self.logger)
 
     def train(self, data_loader, start_episode=0):

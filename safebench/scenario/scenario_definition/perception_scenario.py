@@ -1,7 +1,7 @@
-''' 
+'''
 Date: 2023-01-31 22:23:17
 LastEditTime: 2023-04-03 19:36:06
-Description: 
+Description:
     Copyright (c) 2022-2023 Safebench Team
 
     This work is licensed under the terms of the MIT license.
@@ -55,10 +55,10 @@ class PerceptionScenario(RouteScenario):
 
         self.criteria = self._create_criteria()
         self._iou = 0.0
-    
+
     def get_running_status(self, running_record):
         running_status = {
-            "iou": self._iou, 
+            "iou": self._iou,
             'gt': self._gt,
             'scores': self._scores,
             'logits': self._logits,
@@ -92,7 +92,7 @@ class PerceptionScenario(RouteScenario):
                     break
             if running_status['current_game_time'] >= scenario.timeout:
                 stop = True
-                self.logger.log('>> Scenario stops due to timeout', color='yellow') 
+                self.logger.log('>> Scenario stops due to timeout', color='yellow')
                 break
 
         return running_status, stop
@@ -131,7 +131,7 @@ class PerceptionScenario(RouteScenario):
 
             try:
                 scenario_instance = scenario_class(self.world, self.ego_vehicle, perception_config, timeout=self.timeout)
-            except Exception as e:   
+            except Exception as e:
                 traceback.print_exc()
                 print("Skipping scenario '{}' due to setup error: {}".format(definition['name'], e))
                 continue
@@ -139,7 +139,7 @@ class PerceptionScenario(RouteScenario):
             scenario_instance_list.append(scenario_instance)
         return scenario_instance_list
 
-    def get_bbox(self, world_2_camera, image_w, image_h, fov): 
+    def get_bbox(self, world_2_camera, image_w, image_h, fov):
         def get_image_point(loc, K, w2c):
             # Calculate 2D projection of 3D coordinate
 
@@ -206,7 +206,7 @@ class PerceptionScenario(RouteScenario):
 
     def update_info(self):
         return {
-            # "bbox_label": self.ground_truth_bbox, 
-            "iou_loss": 1-self._iou, 
-            "iou": self._iou, 
+            # "bbox_label": self.ground_truth_bbox,
+            "iou_loss": 1-self._iou,
+            "iou": self._iou,
         }

@@ -40,13 +40,13 @@ class ScenicScenario():
         self.other_actors = []
         self.list_scenarios = [scenario_scenic(world, self.ego_vehicle, self.config, timeout=self.timeout)]
         self.criteria = self._create_criteria()
-                
+
     def _update_route_and_ego(self, timeout=None):
         ego_vehicle = self.world.scenic.simulation.ego.carlaActor
         actor = ego_vehicle
         CarlaDataProvider._carla_actor_pool[actor.id] = actor
-        CarlaDataProvider.register_actor(actor)       
-        
+        CarlaDataProvider.register_actor(actor)
+
         if len(self.config.trajectory) == 0:
             # coarse traj ##
             routeplanner = RoutePlanner(ego_vehicle, 200, [])
@@ -74,7 +74,7 @@ class ScenicScenario():
 
         CarlaDataProvider.set_ego_vehicle_route(convert_transform_to_location(route))
         CarlaDataProvider.set_scenario_config(self.config)
-        
+
         # Timeout of scenario in seconds
         self.timeout = self._estimate_route_timeout(route) if timeout is None else timeout
         return route, ego_vehicle
@@ -129,30 +129,30 @@ class ScenicScenario():
             self.logger.log('>> Scenario stops due to off road', color='yellow')
 
         # only check when evaluating
-        if self.config.scenario_id != 0:  
+        if self.config.scenario_id != 0:
             # route completed
             if running_status['route_complete'] == 100:
                 stop = True
                 self.logger.log('>> Scenario stops due to route completion', color='yellow')
 
         # stop at max step
-        if len(running_record) >= self.max_running_step: 
+        if len(running_record) >= self.max_running_step:
             stop = True
             self.logger.log('>> Scenario stops due to max steps', color='yellow')
 
         for scenario in self.list_scenarios:
             # only check when evaluating
-            if self.config.scenario_id != 0:  
+            if self.config.scenario_id != 0:
                 if running_status['driven_distance'] >= scenario.ego_max_driven_distance:
                     stop = True
                     self.logger.log('>> Scenario stops due to max driven distance', color='yellow')
                     break
             if running_status['current_game_time'] >= scenario.timeout:
                 stop = True
-                self.logger.log('>> Scenario stops due to timeout', color='yellow') 
+                self.logger.log('>> Scenario stops due to timeout', color='yellow')
                 break
             if scenario.check_scenic_terminate():
-                self.logger.log('>> Scenario stops due to scenic termination', color='yellow') 
+                self.logger.log('>> Scenario stops due to scenic termination', color='yellow')
                 stop = True
                 break
         return running_status, stop

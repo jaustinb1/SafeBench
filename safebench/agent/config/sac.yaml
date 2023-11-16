@@ -1,12 +1,12 @@
 policy_type: 'sac'
-model_path: 'safebench/agent/model_ckpt/sac'
+model_path: 'safebench/agent/model_ckpt/sac_suppression_obs_1'
 model_id: 0
 results_folder_path: ''
-obs_type: 0
+obs_type: 2
 
-train_episode: 2000
+train_episode: 167
 eval_in_train_freq: 1
-save_freq: 10
+save_freq: 2
 buffer_capacity: 10000
 buffer_start_training: 100
 
@@ -16,3 +16,5 @@ update_iteration: 3
 gamma: 0.99
 batch_size: 32
 min_Val: 1.0e-7
+
+use_suppression: True

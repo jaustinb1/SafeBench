@@ -5,7 +5,7 @@ import numpy as np
 import copy
 import time
 import torch
-import torch._six
+import torch.inf
 
 from pycocotools.cocoeval import COCOeval
 from pycocotools.coco import COCO

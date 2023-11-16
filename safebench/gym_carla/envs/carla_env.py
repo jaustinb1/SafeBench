@@ -553,6 +553,7 @@ class CarlaEnv(gym.Env):
     def _get_cost(self):
         # cost for collision
         r_collision = -1. if len(self.collision_hist) > 0 else 0.0
+        self.collision_hist.clear()
 
         ego_x, ego_y = get_pos(self.ego_vehicle)
         dis, w = get_lane_dis(self.waypoints, ego_x, ego_y)
@@ -563,7 +564,7 @@ class CarlaEnv(gym.Env):
         lspeed_lon = np.dot(lspeed, w)
         r_fast = -1. if lspeed_lon > self.desired_speed else 0.
 
-        return 1.0 * (4.0 * abs(r_collision) + abs(r_out) + abs(r_fast)), {"collision": r_collision, "out": r_out, "fast": r_fast}
+        return 1.0 * (10.0 * abs(r_collision) + abs(r_out) + abs(r_fast)), {"collision": r_collision, "out": r_out, "fast": r_fast}
 
     def _terminal(self):
         return not self.scenario_manager._running
